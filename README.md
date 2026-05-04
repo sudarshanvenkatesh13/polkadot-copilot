@@ -2,6 +2,8 @@
 
 > AI Developer Assistant for the Polkadot Ecosystem — built to accelerate developer onboarding and reduce friction in the Polkadot ecosystem.
 
+🔴 **Live Demo:** [polkadot-copilot.vercel.app](https://polkadot-copilot.vercel.app)
+
 ![PolkadotCopilot](https://img.shields.io/badge/Polkadot-AI%20Copilot-E6007A?style=for-the-badge&logo=polkadot)
 ![TypeScript](https://img.shields.io/badge/TypeScript-React-3178C6?style=for-the-badge&logo=typescript)
 ![Python](https://img.shields.io/badge/Python-FastAPI-009688?style=for-the-badge&logo=fastapi)
