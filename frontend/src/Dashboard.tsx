@@ -1,6 +1,4 @@
 import { useEffect, useState } from "react";
-
-const API_BASE = process.env.REACT_APP_API_URL || "";
 import axios from "axios";
 import {
   BarChart,
@@ -11,6 +9,8 @@ import {
   ResponsiveContainer,
   Cell,
 } from "recharts";
+
+const API_BASE = process.env.REACT_APP_API_URL || "";
 
 interface Query {
   query: string;
