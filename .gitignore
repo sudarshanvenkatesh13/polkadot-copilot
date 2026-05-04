@@ -3,7 +3,9 @@ backend/chroma_db/
 backend/__pycache__/
 backend/friction_log.json
 backend/.env
+api/__pycache__/
 node_modules/
 frontend/node_modules/
 frontend/build/
 .DS_Store
+*.env.local
