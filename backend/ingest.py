@@ -2,13 +2,13 @@ import os
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
 
 load_dotenv()
 
-# Polkadot docs URLs to scrape
 DOCS_URLS = [
     "https://wiki.polkadot.network/docs/getting-started",
     "https://wiki.polkadot.network/docs/learn-architecture",
@@ -20,19 +20,20 @@ DOCS_URLS = [
     "https://wiki.polkadot.network/docs/build-guide",
     "https://wiki.polkadot.network/docs/build-pdk",
     "https://wiki.polkadot.network/docs/maintain-guides-how-to-validate-polkadot",
+    "https://wiki.polkadot.network/docs/learn-governance",
+    "https://wiki.polkadot.network/docs/learn-bridges",
+    "https://wiki.polkadot.network/docs/build-substrate",
+    "https://wiki.polkadot.network/docs/learn-consensus",
 ]
 
+
 def scrape_page(url: str) -> str:
-    """Scrape text content from a single page"""
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(response.text, "html.parser")
-        
-        # Remove nav, header, footer noise
         for tag in soup(["nav", "header", "footer", "script", "style"]):
             tag.decompose()
-        
         text = soup.get_text(separator=" ", strip=True)
         print(f"✅ Scraped: {url}")
         return text
@@ -40,37 +41,33 @@ def scrape_page(url: str) -> str:
         print(f"❌ Failed: {url} — {e}")
         return ""
 
+
 def ingest():
-    """Scrape docs, chunk, embed and store in ChromaDB"""
     print("🚀 Starting ingestion...")
-    
-    # Scrape all pages
-    all_texts = []
+
+    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    all_documents = []
+
     for url in DOCS_URLS:
         text = scrape_page(url)
-        if text:
-            all_texts.append(text)
-    
-    print(f"\n📄 Scraped {len(all_texts)} pages")
-    
-    # Chunk the text
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200
-    )
-    chunks = splitter.create_documents(all_texts)
-    print(f"✂️  Created {len(chunks)} chunks")
-    
-    # Embed and store in ChromaDB
+        if not text:
+            continue
+        chunks = splitter.split_text(text)
+        for chunk in chunks:
+            all_documents.append(Document(page_content=chunk, metadata={"source": url}))
+
+    print(f"✂️  Created {len(all_documents)} chunks from {len(DOCS_URLS)} pages")
+
     print("🔮 Embedding and storing in ChromaDB...")
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-    vectorstore = Chroma.from_documents(
-        documents=chunks,
+    Chroma.from_documents(
+        documents=all_documents,
         embedding=embeddings,
-        persist_directory="./chroma_db"
+        persist_directory="./chroma_db",
     )
-    
-    print(f"\n✅ Ingestion complete! {len(chunks)} chunks stored in ChromaDB")
+
+    print(f"✅ Ingestion complete! {len(all_documents)} chunks stored in ChromaDB")
+
 
 if __name__ == "__main__":
     ingest()

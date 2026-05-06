@@ -1,11 +1,15 @@
 import { useState, useRef, useEffect } from "react";
 import axios from "axios";
 import ReactMarkdown from "react-markdown";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import Dashboard from "./Dashboard";
+import { API_BASE } from "./config";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
+  sources?: string[];
 }
 
 interface CodeResult {
@@ -14,8 +18,6 @@ interface CodeResult {
   setup: string;
   next_steps: string;
 }
-
-const API_BASE = process.env.REACT_APP_API_URL || "";
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<"chat" | "code" | "dashboard">("chat");
@@ -30,12 +32,14 @@ export default function App() {
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [chatError, setChatError] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Code generator state
   const [intent, setIntent] = useState("");
   const [codeResult, setCodeResult] = useState<CodeResult | null>(null);
   const [codeLoading, setCodeLoading] = useState(false);
+  const [codeError, setCodeError] = useState("");
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -44,26 +48,67 @@ export default function App() {
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
-    const userMessage: Message = { role: "user", content: input };
-    setMessages((prev) => [...prev, userMessage]);
+    const question = input;
+    const userMessage: Message = { role: "user", content: question };
+
+    setChatError("");
+    setMessages((prev) => [...prev, userMessage, { role: "assistant", content: "", sources: [] }]);
     setInput("");
     setLoading(true);
+
     try {
-      const response = await axios.post(`${API_BASE}/ask`, {
-        question: input,
+      const history = messages
+        .filter((m) => m.content)
+        .slice(-6)
+        .map((m) => ({ role: m.role, content: m.content }));
+
+      const response = await fetch(`${API_BASE}/ask`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, history }),
       });
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: response.data.answer },
-      ]);
+
+      if (!response.ok || !response.body) throw new Error("Request failed");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const lines = decoder.decode(value, { stream: true }).split("\n");
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.error) {
+              setChatError("Something went wrong. Please try again.");
+              break;
+            }
+            if (data.token) {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                updated[updated.length - 1] = { ...last, content: last.content + data.token };
+                return updated;
+              });
+            }
+            if (data.sources) {
+              setMessages((prev) => {
+                const updated = [...prev];
+                updated[updated.length - 1] = { ...updated[updated.length - 1], sources: data.sources };
+                return updated;
+              });
+            }
+          } catch {
+            // incomplete JSON chunk, skip
+          }
+        }
+      }
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "Sorry, something went wrong. Make sure the backend is running.",
-        },
-      ]);
+      setChatError("Couldn't reach the backend. Make sure it's running.");
+      setMessages((prev) => prev.slice(0, -1));
     } finally {
       setLoading(false);
     }
@@ -73,13 +118,12 @@ export default function App() {
     if (!intent.trim() || codeLoading) return;
     setCodeLoading(true);
     setCodeResult(null);
+    setCodeError("");
     try {
-      const response = await axios.post(`${API_BASE}/generate`, {
-        intent: intent,
-      });
+      const response = await axios.post(`${API_BASE}/generate`, { intent });
       setCodeResult(response.data);
     } catch {
-      alert("Something went wrong. Make sure the backend is running.");
+      setCodeError("Generation failed. Make sure the backend is running and try again.");
     } finally {
       setCodeLoading(false);
     }
@@ -108,39 +152,19 @@ export default function App() {
           <div style={styles.logo}>⬡</div>
           <div>
             <div style={styles.headerTitle}>PolkadotCopilot</div>
-            <div style={styles.headerSubtitle}>
-              AI Developer Assistant for the Polkadot Ecosystem
-            </div>
+            <div style={styles.headerSubtitle}>AI Developer Assistant for the Polkadot Ecosystem</div>
           </div>
         </div>
         <div style={styles.tabs}>
-          <button
-            style={{
-              ...styles.tab,
-              ...(activeTab === "chat" ? styles.activeTab : {}),
-            }}
-            onClick={() => setActiveTab("chat")}
-          >
-            💬 Ask Anything
-          </button>
-          <button
-            style={{
-              ...styles.tab,
-              ...(activeTab === "code" ? styles.activeTab : {}),
-            }}
-            onClick={() => setActiveTab("code")}
-          >
-            ⚡ Code Generator
-          </button>
-          <button
-            style={{
-              ...styles.tab,
-              ...(activeTab === "dashboard" ? styles.activeTab : {}),
-            }}
-            onClick={() => setActiveTab("dashboard")}
-          >
-            📊 Friction Map
-          </button>
+          {(["chat", "code", "dashboard"] as const).map((tab) => (
+            <button
+              key={tab}
+              style={{ ...styles.tab, ...(activeTab === tab ? styles.activeTab : {}) }}
+              onClick={() => setActiveTab(tab)}
+            >
+              {tab === "chat" ? "💬 Ask Anything" : tab === "code" ? "⚡ Code Generator" : "📊 Friction Map"}
+            </button>
+          ))}
         </div>
         <div style={styles.badge}>Powered by RAG</div>
       </div>
@@ -151,36 +175,34 @@ export default function App() {
           <div style={styles.chatArea}>
             {messages.map((msg, i) => (
               <div
-                key={i}
-                style={{
-                  ...styles.messageRow,
-                  justifyContent:
-                    msg.role === "user" ? "flex-end" : "flex-start",
-                }}
+                key={`${msg.role}-${i}`}
+                style={{ ...styles.messageRow, justifyContent: msg.role === "user" ? "flex-end" : "flex-start" }}
               >
-                {msg.role === "assistant" && (
-                  <div style={styles.avatar}>⬡</div>
-                )}
-                <div
-                  style={{
-                    ...styles.bubble,
-                    ...(msg.role === "user"
-                      ? styles.userBubble
-                      : styles.assistantBubble),
-                  }}
-                >
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                {msg.role === "assistant" && <div style={styles.avatar}>⬡</div>}
+                <div style={{ ...styles.bubble, ...(msg.role === "user" ? styles.userBubble : styles.assistantBubble) }}>
+                  {msg.content ? (
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  ) : (
+                    <span style={styles.typing}>
+                      <span style={styles.dot} />
+                      <span style={styles.dot} />
+                      <span style={styles.dot} />
+                    </span>
+                  )}
+                  {msg.sources && msg.sources.length > 0 && (
+                    <div style={styles.sources}>
+                      <span style={styles.sourcesLabel}>Sources: </span>
+                      {msg.sources.map((src) => (
+                        <a key={src} href={src} target="_blank" rel="noopener noreferrer" style={styles.sourceLink}>
+                          {src.split("/").pop()}
+                        </a>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
-            {loading && (
-              <div style={{ ...styles.messageRow, justifyContent: "flex-start" }}>
-                <div style={styles.avatar}>⬡</div>
-                <div style={{ ...styles.bubble, ...styles.assistantBubble }}>
-                  <span style={styles.typing}>Thinking...</span>
-                </div>
-              </div>
-            )}
+            {chatError && <div style={styles.errorBanner}>{chatError}</div>}
             <div ref={bottomRef} />
           </div>
 
@@ -192,11 +214,7 @@ export default function App() {
                 "How do I start building on Polkadot?",
                 "What is the difference between Polkadot and Kusama?",
               ].map((q) => (
-                <button
-                  key={q}
-                  style={styles.suggestionBtn}
-                  onClick={() => setInput(q)}
-                >
+                <button key={q} style={styles.suggestionBtn} onClick={() => setInput(q)}>
                   {q}
                 </button>
               ))}
@@ -213,10 +231,7 @@ export default function App() {
               rows={1}
             />
             <button
-              style={{
-                ...styles.sendBtn,
-                opacity: loading || !input.trim() ? 0.5 : 1,
-              }}
+              style={{ ...styles.sendBtn, opacity: loading || !input.trim() ? 0.5 : 1 }}
               onClick={sendMessage}
               disabled={loading || !input.trim()}
             >
@@ -232,8 +247,7 @@ export default function App() {
           <div style={styles.codeHeader}>
             <div style={styles.codeHeaderTitle}>⚡ Intent to Code</div>
             <div style={styles.codeHeaderSubtitle}>
-              Describe what you want to build in plain English — get working
-              Polkadot starter code instantly
+              Describe what you want to build in plain English — get working Polkadot starter code instantly
             </div>
           </div>
 
@@ -244,11 +258,7 @@ export default function App() {
               "Build a staking mechanism with rewards",
               "Create a governance voting system",
             ].map((ex) => (
-              <button
-                key={ex}
-                style={styles.exampleBtn}
-                onClick={() => setIntent(ex)}
-              >
+              <button key={ex} style={styles.exampleBtn} onClick={() => setIntent(ex)}>
                 {ex}
               </button>
             ))}
@@ -263,16 +273,23 @@ export default function App() {
               rows={3}
             />
             <button
-              style={{
-                ...styles.generateBtn,
-                opacity: codeLoading || !intent.trim() ? 0.5 : 1,
-              }}
+              style={{ ...styles.generateBtn, opacity: codeLoading || !intent.trim() ? 0.5 : 1 }}
               onClick={generateCode}
               disabled={codeLoading || !intent.trim()}
             >
-              {codeLoading ? "Generating..." : "Generate Code ⚡"}
+              {codeLoading ? (
+                <span>
+                  <span style={styles.dot} />
+                  <span style={styles.dot} />
+                  <span style={styles.dot} />
+                </span>
+              ) : (
+                "Generate Code ⚡"
+              )}
             </button>
           </div>
+
+          {codeError && <div style={styles.errorBanner}>{codeError}</div>}
 
           {codeResult && (
             <div style={styles.codeResults}>
@@ -283,7 +300,9 @@ export default function App() {
 
               <div style={styles.resultSection}>
                 <div style={styles.resultLabel}>🛠 Setup Commands</div>
-                <pre style={styles.codeBlock}>{codeResult.setup}</pre>
+                <SyntaxHighlighter language="bash" style={vscDarkPlus} customStyle={styles.highlighter}>
+                  {codeResult.setup}
+                </SyntaxHighlighter>
               </div>
 
               <div style={styles.resultSection}>
@@ -293,7 +312,9 @@ export default function App() {
                     {copied ? "✅ Copied!" : "Copy"}
                   </button>
                 </div>
-                <pre style={styles.codeBlock}>{codeResult.code}</pre>
+                <SyntaxHighlighter language="rust" style={vscDarkPlus} customStyle={styles.highlighter}>
+                  {codeResult.code}
+                </SyntaxHighlighter>
               </div>
 
               <div style={styles.resultSection}>
@@ -309,6 +330,18 @@ export default function App() {
 
       {/* DASHBOARD TAB */}
       {activeTab === "dashboard" && <Dashboard />}
+
+      <style>{`
+        @keyframes blink {
+          0%, 80%, 100% { opacity: 0; }
+          40% { opacity: 1; }
+        }
+        @media (max-width: 768px) {
+          .pc-header { flex-wrap: wrap; gap: 12px; }
+          .pc-tabs { order: 3; width: 100%; justify-content: center; }
+          .pc-badge { display: none; }
+        }
+      `}</style>
     </div>
   );
 }
@@ -329,6 +362,8 @@ const styles: { [key: string]: React.CSSProperties } = {
     padding: "16px 24px",
     borderBottom: "1px solid #1e1e2e",
     backgroundColor: "#0d0d1a",
+    flexWrap: "wrap",
+    gap: "12px",
   },
   headerLeft: {
     display: "flex",
@@ -351,6 +386,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   tabs: {
     display: "flex",
     gap: "8px",
+    flexWrap: "wrap",
   },
   tab: {
     padding: "8px 16px",
@@ -391,6 +427,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: "20px",
     color: "#e6007a",
     marginTop: "4px",
+    flexShrink: 0,
   },
   bubble: {
     maxWidth: "70%",
@@ -411,8 +448,47 @@ const styles: { [key: string]: React.CSSProperties } = {
     borderBottomLeftRadius: "4px",
   },
   typing: {
+    display: "inline-flex",
+    gap: "4px",
+    alignItems: "center",
+    padding: "4px 0",
+  },
+  dot: {
+    display: "inline-block",
+    width: "6px",
+    height: "6px",
+    borderRadius: "50%",
+    backgroundColor: "#e6007a",
+    animation: "blink 1.4s infinite both",
+  },
+  sources: {
+    marginTop: "8px",
+    paddingTop: "8px",
+    borderTop: "1px solid #1e1e2e",
+    fontSize: "11px",
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px",
+    alignItems: "center",
+  },
+  sourcesLabel: {
     color: "#64748b",
-    fontStyle: "italic",
+  },
+  sourceLink: {
+    color: "#e6007a",
+    textDecoration: "none",
+    padding: "2px 8px",
+    borderRadius: "10px",
+    border: "1px solid #e6007a44",
+    backgroundColor: "#1a0a2e",
+  },
+  errorBanner: {
+    backgroundColor: "#2d0a1e",
+    border: "1px solid #e6007a44",
+    color: "#ff4da6",
+    borderRadius: "8px",
+    padding: "10px 16px",
+    fontSize: "13px",
   },
   suggestions: {
     display: "flex",
@@ -519,6 +595,10 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontSize: "14px",
     fontWeight: "600",
     cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "4px",
   },
   codeResults: {
     display: "flex",
@@ -536,7 +616,7 @@ const styles: { [key: string]: React.CSSProperties } = {
     fontWeight: "600",
     color: "#e6007a",
     marginBottom: "10px",
-    textTransform: "uppercase",
+    textTransform: "uppercase" as const,
     letterSpacing: "0.05em",
   },
   resultLabelRow: {
@@ -550,17 +630,10 @@ const styles: { [key: string]: React.CSSProperties } = {
     color: "#e2e8f0",
     lineHeight: "1.6",
   },
-  codeBlock: {
-    backgroundColor: "#0a0a0f",
-    border: "1px solid #1e1e2e",
+  highlighter: {
     borderRadius: "8px",
-    padding: "16px",
     fontSize: "13px",
-    color: "#a8ff78",
-    overflowX: "auto",
-    whiteSpace: "pre-wrap",
-    lineHeight: "1.6",
-    margin: "0",
+    margin: 0,
   },
   copyBtn: {
     padding: "4px 12px",

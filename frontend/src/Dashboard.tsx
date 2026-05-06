@@ -9,8 +9,7 @@ import {
   ResponsiveContainer,
   Cell,
 } from "recharts";
-
-const API_BASE = process.env.REACT_APP_API_URL || "";
+import { API_BASE } from "./config";
 
 interface Query {
   query: string;
@@ -37,22 +36,14 @@ function categorize(queries: Query[]): TopicCount[] {
   return TOPICS.map((topic) => ({
     topic: topic.label,
     count: queries.filter((q) =>
-      topic.keywords.some((k) =>
-        q.query.toLowerCase().includes(k)
-      )
+      topic.keywords.some((k) => q.query.toLowerCase().includes(k))
     ).length,
   })).sort((a, b) => b.count - a.count);
 }
 
 const COLORS = [
-  "#e6007a",
-  "#ff4da6",
-  "#cc0066",
-  "#ff80bf",
-  "#990050",
-  "#ff1a8c",
-  "#b30059",
-  "#ff66b3",
+  "#e6007a", "#ff4da6", "#cc0066", "#ff80bf",
+  "#990050", "#ff1a8c", "#b30059", "#ff66b3",
 ];
 
 export default function Dashboard() {
@@ -61,20 +52,22 @@ export default function Dashboard() {
     total: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    const fetch = async () => {
+    const load = async () => {
       try {
         const res = await axios.get(`${API_BASE}/friction`);
         setData(res.data);
+        setError("");
       } catch {
-        console.error("Failed to fetch friction data");
+        setError("Failed to load friction data. Make sure the backend is running.");
       } finally {
         setLoading(false);
       }
     };
-    fetch();
-    const interval = setInterval(fetch, 10000); // refresh every 10s
+    load();
+    const interval = setInterval(load, 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -90,65 +83,50 @@ export default function Dashboard() {
 
   if (loading) {
     return (
-      <div style={styles.loading}>Loading friction data...</div>
+      <div style={styles.centered}>
+        <div style={styles.spinner}>
+          <span style={styles.spinnerDot} />
+          <span style={styles.spinnerDot} />
+          <span style={styles.spinnerDot} />
+        </div>
+        <div style={styles.loadingText}>Loading friction data...</div>
+      </div>
     );
+  }
+
+  if (error) {
+    return <div style={{ ...styles.centered, color: "#ff4da6", fontSize: "14px" }}>{error}</div>;
   }
 
   return (
     <div style={styles.container}>
       {/* Stats Row */}
       <div style={styles.statsRow}>
-        <div style={styles.statCard}>
-          <div style={styles.statNumber}>{data.total}</div>
-          <div style={styles.statLabel}>Total Queries</div>
-        </div>
-        <div style={styles.statCard}>
-          <div style={styles.statNumber}>
-            {data.queries.filter((q) => q.query.startsWith("[CODE]")).length}
+        {[
+          { value: data.total, label: "Total Queries" },
+          { value: data.queries.filter((q) => q.query.startsWith("[CODE]")).length, label: "Code Generations" },
+          { value: topicData.find((t) => t.count > 0)?.topic || "—", label: "Top Pain Point" },
+          { value: topicData.filter((t) => t.count > 0).length, label: "Topic Clusters" },
+        ].map(({ value, label }) => (
+          <div key={label} style={styles.statCard}>
+            <div style={styles.statNumber}>{value}</div>
+            <div style={styles.statLabel}>{label}</div>
           </div>
-          <div style={styles.statLabel}>Code Generations</div>
-        </div>
-        <div style={styles.statCard}>
-          <div style={styles.statNumber}>
-            {topicData.find((t) => t.count > 0)?.topic || "—"}
-          </div>
-          <div style={styles.statLabel}>Top Pain Point</div>
-        </div>
-        <div style={styles.statCard}>
-          <div style={styles.statNumber}>
-            {topicData.filter((t) => t.count > 0).length}
-          </div>
-          <div style={styles.statLabel}>Topic Clusters</div>
-        </div>
+        ))}
       </div>
 
       {/* Chart + Recent */}
       <div style={styles.mainRow}>
-        {/* Bar Chart */}
         <div style={styles.chartCard}>
           <div style={styles.cardTitle}>🔥 Developer Friction Map</div>
-          <div style={styles.cardSubtitle}>
-            Where developers get stuck most in the Polkadot ecosystem
-          </div>
+          <div style={styles.cardSubtitle}>Where developers get stuck most in the Polkadot ecosystem</div>
           {data.total === 0 ? (
-            <div style={styles.empty}>
-              No data yet — ask some questions in the chat!
-            </div>
+            <div style={styles.empty}>No data yet — ask some questions in the chat!</div>
           ) : (
             <ResponsiveContainer width="100%" height={280}>
               <BarChart data={topicData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                <XAxis
-                  dataKey="topic"
-                  tick={{ fill: "#64748b", fontSize: 12 }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fill: "#64748b", fontSize: 12 }}
-                  axisLine={false}
-                  tickLine={false}
-                  allowDecimals={false}
-                />
+                <XAxis dataKey="topic" tick={{ fill: "#64748b", fontSize: 12 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: "#64748b", fontSize: 12 }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip
                   contentStyle={{
                     backgroundColor: "#13131f",
@@ -159,7 +137,7 @@ export default function Dashboard() {
                 />
                 <Bar dataKey="count" radius={[4, 4, 0, 0]}>
                   {topicData.map((_, index) => (
-                    <Cell key={index} fill={COLORS[index % COLORS.length]} />
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Bar>
               </BarChart>
@@ -167,7 +145,6 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Recent Queries */}
         <div style={styles.recentCard}>
           <div style={styles.cardTitle}>💬 Recent Questions</div>
           <div style={styles.cardSubtitle}>Live feed of developer queries</div>
@@ -175,12 +152,10 @@ export default function Dashboard() {
             {recentQueries.length === 0 ? (
               <div style={styles.empty}>No queries yet</div>
             ) : (
-              recentQueries.map((q, i) => (
-                <div key={i} style={styles.queryItem}>
+              recentQueries.map((q) => (
+                <div key={q.timestamp} style={styles.queryItem}>
                   <div style={styles.queryText}>{q.query}</div>
-                  <div style={styles.queryTime}>
-                    {new Date(q.timestamp).toLocaleTimeString()}
-                  </div>
+                  <div style={styles.queryTime}>{new Date(q.timestamp).toLocaleTimeString()}</div>
                 </div>
               ))
             )}
@@ -192,12 +167,10 @@ export default function Dashboard() {
       {codeQueries.length > 0 && (
         <div style={styles.codeCard}>
           <div style={styles.cardTitle}>⚡ Recent Code Generations</div>
-          <div style={styles.cardSubtitle}>
-            What developers are trying to build
-          </div>
+          <div style={styles.cardSubtitle}>What developers are trying to build</div>
           <div style={styles.codeList}>
-            {codeQueries.map((q, i) => (
-              <div key={i} style={styles.codeItem}>
+            {codeQueries.map((q) => (
+              <div key={q.timestamp} style={styles.codeItem}>
                 {q.query.replace("[CODE] ", "")}
               </div>
             ))}
@@ -210,16 +183,29 @@ export default function Dashboard() {
         <div style={styles.insightCard}>
           <div style={styles.insightTitle}>💡 Ecosystem Insight</div>
           <div style={styles.insightText}>
-            Based on {data.total} developer interactions, the biggest friction
-            point in the Polkadot ecosystem is{" "}
+            Based on {data.total} developer interactions, the biggest friction point in the Polkadot ecosystem is{" "}
             <span style={styles.highlight}>
               {topicData.find((t) => t.count > 0)?.topic || "general onboarding"}
             </span>
-            . This suggests documentation and tooling improvements in this area
-            would have the highest impact on developer adoption.
+            . This suggests documentation and tooling improvements in this area would have the highest impact on
+            developer adoption.
           </div>
         </div>
       )}
+
+      <style>{`
+        @keyframes blink {
+          0%, 80%, 100% { opacity: 0; }
+          40% { opacity: 1; }
+        }
+        @media (max-width: 900px) {
+          .pc-stats-row { grid-template-columns: repeat(2, 1fr) !important; }
+          .pc-main-row { grid-template-columns: 1fr !important; }
+        }
+        @media (max-width: 480px) {
+          .pc-stats-row { grid-template-columns: 1fr 1fr !important; }
+        }
+      `}</style>
     </div>
   );
 }
@@ -233,13 +219,30 @@ const styles: { [key: string]: React.CSSProperties } = {
     overflowY: "auto",
     flex: 1,
   },
-  loading: {
+  centered: {
     display: "flex",
+    flexDirection: "column",
     alignItems: "center",
     justifyContent: "center",
     flex: 1,
+    gap: "12px",
     color: "#64748b",
+  },
+  spinner: {
+    display: "flex",
+    gap: "6px",
+  },
+  spinnerDot: {
+    display: "inline-block",
+    width: "8px",
+    height: "8px",
+    borderRadius: "50%",
+    backgroundColor: "#e6007a",
+    animation: "blink 1.4s infinite both",
+  },
+  loadingText: {
     fontSize: "14px",
+    color: "#64748b",
   },
   statsRow: {
     display: "grid",
@@ -262,7 +265,7 @@ const styles: { [key: string]: React.CSSProperties } = {
   statLabel: {
     fontSize: "12px",
     color: "#64748b",
-    textTransform: "uppercase",
+    textTransform: "uppercase" as const,
     letterSpacing: "0.05em",
   },
   mainRow: {
